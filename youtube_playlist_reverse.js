@@ -1,166 +1,303 @@
 // ==UserScript==
-// @name         Play Youtube playlist in reverse order
+// @name         YouTube Playlist Reverse+
 // @namespace    https://github.com/Dragosarus/Userscripts/
-// @version      7.9
-// @description  Adds button for loading the previous video in a YT playlist
-// @author       Dragosarus
-// @match        http://www.youtube.com/*
-// @match        https://www.youtube.com/*
-// @grant        none
-// @require      http://code.jquery.com/jquery-latest.js
+// @version      8.1
+// @description  Enhanced reverse playlist navigation with smart features
+// @author       Dragosarus & AI Assistant
+// @match        *://www.youtube.com/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @noframes
+// @run-at       document-start
+// @homepage     https://github.com/Dragosarus/Userscripts/
+// @supportURL   https://github.com/Dragosarus/Userscripts/issues
 // ==/UserScript==
 
-// Cookies (current session):
-// pytplir_playPrevious - saves the button state between loads
-
-/* NOTES:
- *    - If the button is not displayed (but the script is running), pause and unpause the video.
- *    - If it still does not appear, reload the page.
- *    - If it *still* does not appear, let me know through Greasy Fork or GitHub.
- *    - If the button is displayed but does not work properly/consistently, increase the value of redirectWhenTimeLeft.
-*/
-
-(function() {
+(() => {
     'use strict';
-    $(document).ready(function() {
-        // Determines when to load the next video.
-        // Increase these if the redirect does not work as intended (i.e. fails to override Youtube's redirect),
-        // Decreasing these will let you see more of the video before it redirects, but the redirect might stop working (consistently)
-        const redirectWhenTimeLeft = 0.3; // seconds before the end of the video
-        const redirectWhenTimeLeft_miniplayer = 0.6;
-        const skipUnplayable = true; // Skip videos that have not been premiered yet/upcoming livestreams
 
-        const activeColor = "rgb(64,166,255)";
-        const inactiveColor = "rgb(144,144,144)";
-        const circleColor = "rgb(144,144,144)";
-        const ttBGColor = "rgb(100,100,100)";
-        const ttTextColor = "rgb(237,240,243)";
+    // Configuration settings
+    const CONFIG = {
+        redirectThreshold: 0.5,          // Seconds before video end to trigger redirect
+        miniplayerThreshold: 0.8,        // Higher threshold for miniplayer due to latency
+        skipUnplayable: true,            // Skip upcoming/unavailable videos
+        persistentSettings: true,        // Remember settings between sessions
+        smartRedirect: true,             // Enable/disable auto-redirect feature
+        debugMode: false                 // Enable debug logging
+    };
 
-        // Logs debug messages to the console.
-        const debug = false;
+    // Constants
+    const SELECTORS = {
+        BUTTON_CONTAINER: 'div#top-level-buttons-computed',
+        VIDEO_ELEMENT: 'video',
+        CURRENT_PLAYLIST_ITEM: 'ytd-playlist-panel-video-renderer[selected]',
+        TIMESTAMP: 'span.ytd-thumbnail-overlay-time-status-renderer',
+        MINIPLAYER: 'ytd-miniplayer',
+        SHUFFLE_BUTTON: 'tp-yt-paper-icon-button[aria-label="Shuffle"]',
+        AD_CONTAINER: '.ad-showing, .ad-interrupting',
+        PLAYLIST_PANEL: 'ytd-playlist-panel-renderer'
+    };
 
-        const selectors = {
-            "buttonLocation":            "div[id=playlist-action-menu] > .ytd-playlist-panel-renderer > div[id=top-level-buttons-computed]",
-            "content":                   "#content",
-            "player":                    ".html5-main-video",
-            "miniplayerDiv":             "div.miniplayer",
-            "playlistButtons":           ".ytd-watch-flexy #playlist #playlist-action-menu",
-            "playlistButtonsMiniplayer": "ytd-playlist-panel-renderer.ytd-miniplayer #playlist-action-menu",
-            "playlistCurrentVideo":      "ytd-playlist-panel-video-renderer[selected]",
-            "playlistVideos":            "#publisher-container span.index-message",
-            "playlistVideosMiniplayer":  "yt-formatted-string[id=owner-name] :nth-child(3)",
-            "shuffleButtonActive":       "path[d='M18.51,13.29l4.21,4.21l-4.21,4.21l-1.41-1.41l1.8-1.8c-2.95-0.03-5.73-1.32-7.66-3.55l1.51-1.31 c1.54,1.79,3.77,2.82,6.13,2.85l-1.79-1.79L18.51,13.29z M18.88,7.51l-1.78,1.78l1.41,1.41l4.21-4.21l-4.21-4.21l-1.41,1.41l1.8,1.8 c-3.72,0.04-7.12,2.07-8.9,5.34l-0.73,1.34C7.81,14.85,5.03,17,2,17v2c3.76,0,7.21-2.55,9.01-5.85l0.73-1.34 C13.17,9.19,15.9,7.55,18.88,7.51z M8.21,10.31l1.5-1.32C7.77,6.77,4.95,5,2,5v2C4.38,7,6.64,8.53,8.21,10.31z']",
-            "shuffleButtonInactive":     "path[d='M18.15,13.65l3.85,3.85l-3.85,3.85l-0.71-0.71L20.09,18H19c-2.84,0-5.53-1.23-7.39-3.38l0.76-0.65 C14.03,15.89,16.45,17,19,17h1.09l-2.65-2.65L18.15,13.65z M19,7h1.09l-2.65,2.65l0.71,0.71l3.85-3.85l-3.85-3.85l-0.71,0.71 L20.09,6H19c-3.58,0-6.86,1.95-8.57,5.09l-0.73,1.34C8.16,15.25,5.21,17,2,17v1c3.58,0,6.86-1.95,8.57-5.09l0.73-1.34 C12.84,8.75,15.79,7,19,7z M8.59,9.98l0.75-0.66C7.49,7.21,4.81,6,2,6v1C4.52,7,6.92,8.09,8.59,9.98z']",
-            "shuffleButtonLegacy":       "path[d='M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z']",
-            "timestamp":                 "span.ytd-thumbnail-overlay-time-status-renderer",
-            "videoPlayer":               ".html5-video-player"
+    // State management
+    let player = null;
+    let playPrevious = false;
+    let mutationObserver = null;
+
+    // Initialize script
+    function init() {
+        setupStyles();
+        loadSettings();
+        setupObservers();
+        setupPlaybackChecker();
+        tryInsertButton();
+    }
+
+    // Add CSS styles to document
+    function setupStyles() {
+        GM_addStyle(`
+            #pytplir_btn {
+                cursor: pointer;
+                margin-left: 8px;
+                transition: transform 0.2s ease;
+            }
+            #pytplir_btn:hover {
+                transform: scale(1.05);
+            }
+            #pytplir_btn[activated="true"] #pytplir_arrow_up {
+                fill: #40a6ff;
+            }
+            #pytplir_btn[activated="false"] #pytplir_arrow_down {
+                fill: #40a6ff;
+            }
+            .pytplir_tooltip {
+                position: absolute;
+                background: rgba(0,0,0,0.8);
+                color: white;
+                padding: 5px 10px;
+                border-radius: 4px;
+                font-size: 12px;
+                white-space: nowrap;
+                z-index: 1000;
+                opacity: 0;
+                transition: opacity 0.3s;
+                pointer-events: none;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                font-family: Roboto, Arial, sans-serif;
+            }
+            #pytplir_btn:hover + .pytplir_tooltip {
+                opacity: 1;
+            }
+            .pytplir_notification {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: #333;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 4px;
+                z-index: 9999;
+                font-family: Roboto, Arial, sans-serif;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                animation: fadeInOut 3s forwards;
+            }
+            @keyframes fadeInOut {
+                0%, 100% { opacity: 0; transform: translateY(10px); }
+                10%, 90% { opacity: 1; transform: translateY(0); }
+            }
+        `);
+    }
+
+    // Load saved settings
+    function loadSettings() {
+        playPrevious = CONFIG.persistentSettings ? 
+            GM_getValue('pytplir_playPrevious', false) : false;
+    }
+
+    // Set up observers
+    function setupObservers() {
+        // Create observer for DOM changes
+        mutationObserver = new MutationObserver(mutations => {
+            if (document.querySelector(SELECTORS.BUTTON_CONTAINER)) {
+                tryInsertButton();
+            }
+            if (!player) {
+                player = document.querySelector(SELECTORS.VIDEO_ELEMENT);
+            }
+        });
+        
+        mutationObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    // Set up playback checker
+    function setupPlaybackChecker() {
+        setInterval(checkPlaybackTime, 500);
+    }
+
+    // Create button HTML
+    function createButtonHTML() {
+        return `
+            <div id="pytplir_div" style="position:relative">
+                <svg id="pytplir_btn" width="40" height="40" viewBox="0 0 40 40" activated="${playPrevious}">
+                    <circle cx="20" cy="20" r="18" fill="transparent" stroke="#909090" stroke-width="1"/>
+                    <polygon id="pytplir_arrow_up" points="17,19 17,17 13,17 20,11 27,17 23,17 23,19" fill="#909090"/>
+                    <polygon id="pytplir_arrow_down" points="17,21 17,23 13,23 20,29 27,23 23,23 23,21" fill="#909090"/>
+                </svg>
+                <div class="pytplir_tooltip">Autoplay Direction</div>
+            </div>
+        `;
+    }
+
+    // Insert button into UI
+    function tryInsertButton() {
+        const targetContainer = document.querySelector(SELECTORS.BUTTON_CONTAINER);
+        if (!targetContainer) return;
+        
+        // Skip if button already exists
+        if (targetContainer.querySelector('#pytplir_div')) {
+            updateButtonState();
+            return;
         }
+        
+        // Create and insert button
+        const buttonContainer = document.createElement('div');
+        buttonContainer.innerHTML = createButtonHTML();
+        const button = buttonContainer.firstElementChild;
+        targetContainer.appendChild(button);
+        
+        // Add event listener
+        button.querySelector('#pytplir_btn').addEventListener('click', togglePlayDirection);
+        updateButtonState();
+        log('Control button added to UI');
+    }
 
-        const ytdApp = $("ytd-app")[0];
+    // Toggle playback direction
+    function togglePlayDirection() {
+        playPrevious = !playPrevious;
+        
+        if (CONFIG.persistentSettings) {
+            GM_setValue('pytplir_playPrevious', playPrevious);
+        }
+        
+        updateButtonState();
+        showNotification(playPrevious ? 
+            "🔁 Mode: Reverse Order" : "➡️ Mode: Normal Order");
+    }
 
-        let player;
-        let playPrevious;
-        let redirectFlag = false;
-        let shuffle;
-        let miniplayerActive = false;
-        let miniplayerFlag = false; // keep track of switches between miniplayer and normal mode
-        let playerListenersAdded = false;
+    // Update button state
+    function updateButtonState() {
+        const button = document.querySelector('#pytplir_btn');
+        if (button) {
+            button.setAttribute('activated', playPrevious);
+        }
+    }
 
-        // create button
-        const svgNS = "http://www.w3.org/2000/svg";
-        const btn_div = document.createElement("div");
-        const bg_circle = document.createElementNS(svgNS, "circle");
-        const bg_circle_anim = document.createElementNS(svgNS, "animate");
-        const arrow_up = document.createElementNS(svgNS, "polygon");
-        const arrow_down = document.createElementNS(svgNS, "polygon");
-        const btn_svg = document.createElementNS(svgNS, "svg");
-        const tt_svg = document.createElementNS(svgNS, "svg");
-        const tt_svg_fadein = document.createElementNS(svgNS, "animate");
-        const tt_svg_fadeout = document.createElementNS(svgNS, "animate");
-        const tt_rect = document.createElementNS(svgNS, "rect");
-        const tt_text = document.createElementNS(svgNS, "text");
-        const tt_div = document.createElement("div");
+    // Check playback time
+    function checkPlaybackTime() {
+        try {
+            if (!player) {
+                player = document.querySelector(SELECTORS.VIDEO_ELEMENT);
+            }
+            if (!player || player.paused || !CONFIG.smartRedirect || !playPrevious) {
+                return;
+            }
 
-        setAttributes(bg_circle_anim, [["attributeName", "fill-opacity"],
-                                       ["values", "0;0.1;0.2;0.1;0.0"],
-                                       ["dur", "0.3s"],
-                                       ["restart", "always"],
-                                       ["repeatCount", "1"],
-                                       ["begin", "indefinite"],
-                                       ["id", "pytplir_bg_circle_anim"]]);
-        setAttributes(bg_circle, [["cx", "20"],
-                                  ["cy", "20"],
-                                  ["r", "20"],
-                                  ["fill", circleColor],
-                                  ["fill-opacity", "0"]]);
-        setAttributes(arrow_up, [["points", "17,19 17,17 13,17 20,11 27,17 23,17 23,19"],
-                                 ["id", "pytplir_arrow_up"]]);
-        setAttributes(arrow_down, [["points", "17,21 17,23 13,23 20,29 27,23 23,23 23,21"],
-                                   ["id", "pytplir_arrow_down"]]);
-        setAttributes(btn_svg, [["xmlns", svgNS],
-                                 ["viewbox", "0 0 40 40"],
-                                 ["width", "40"],
-                                 ["height", "40"],
-                                 ["style", "cursor: pointer; margin-left: 8px;"],
-                                 ["id", "pytplir_btn"]]);
-        setAttributes(tt_rect, [["x", "0"],
-                                ["y", "0"],
-                                ["rx", "2"],
-                                ["ry", "2"],
-                                ["width", "110"],
-                                ["height", "34"],
-                                ["fill", ttBGColor],
-                                ["fill-opacity", "0.9"]]);
-        setAttributes(tt_text, [["x", "8"],
-                                ["y", "22"],
-                                ["font-family", "Roboto, Noto, sans-serif"],
-                                ["font-size", "13px"],
-                                ["fill", ttTextColor],
-                                ["style", "user-select:none;"]]);
-        setAttributes(tt_svg_fadein, [["attributeType", "CSS"],
-                                      ["attributeName", "opacity"],
-                                      ["values", "0;1"],
-                                      ["dur", "0.1s"],
-                                      ["restart", "always"],
-                                      ["repeatCount", "1"],
-                                      ["begin", "indefinite"],
-                                      ["id", "pytplir_tt_fadein"],
-                                      ["fill", "freeze"]]);
-        setAttributes(tt_svg_fadeout, [["attributeType", "CSS"],
-                                       ["attributeName", "opacity"],
-                                       ["values", "1;0"],
-                                       ["dur", "0.1s"],
-                                       ["restart", "always"],
-                                       ["repeatCount", "1"],
-                                       ["begin", "indefinite"],
-                                       ["id", "pytplir_tt_fadeout"],
-                                       ["fill", "freeze"]]);
-        const tt_svg_offset = "position:absolute; top:13px; left:-32px; z-index:100; opacity:0.0;";
-        setAttributes(tt_svg, [["viewbox", "0 0 100 34"],
-                               ["xmlns", "http://www.w3.org/2000/svg"],
-                               ["width", "100"],
-                               ["height", "34"],
-                               ["style", "padding-left: 10px; fill:" + ttBGColor + "; " + tt_svg_offset],
-                               ["id", "pytplir_tt"]]);
-        setAttributes(tt_div, [["style", "position:relative; width:0; height:0;"]]);
-        setAttributes(btn_div, [["id", "pytplir_div"]]);
-        tt_text.innerHTML = "Autoplay order";
-        bg_circle.appendChild(bg_circle_anim);
-        appendChildren(btn_svg, [bg_circle, arrow_up, arrow_down]);
-        appendChildren(tt_svg, [tt_rect, tt_text, tt_svg_fadein, tt_svg_fadeout]);
-        tt_div.appendChild(tt_svg);
-        appendChildren(btn_div, [btn_svg, tt_div]);
-        $(btn_svg).on("click", onButtonClick);
-        $(btn_svg).on("click", function(){$(this).parent().find("#pytplir_bg_circle_anim")[0].beginElement();});
-        $(btn_svg).on("mouseenter", function(){$(this).parent().find("#pytplir_tt_fadein")[0].beginElement();});
-        $(btn_svg).on("mouseleave", function(){$(this).parent().find("#pytplir_tt_fadeout")[0].beginElement();});
+            const timeLeft = player.duration - player.currentTime;
+            const threshold = isMiniPlayer() ? 
+                CONFIG.miniplayerThreshold : CONFIG.redirectThreshold;
 
+            if (timeLeft < threshold && shouldRedirect()) {
+                redirectToPrevious();
+            }
+        } catch (error) {
+            log(`Error during playback check: ${error.message}`);
+        }
+    }
+
+    // Redirect to previous video
+    function redirectToPrevious() {
+        const currentItem = document.querySelector(SELECTORS.CURRENT_PLAYLIST_ITEM);
+        if (!currentItem) return;
+        
+        // Find previous item in playlist
+        let prevItem = currentItem.previousElementSibling;
+        while (prevItem) {
+            if (prevItem.matches('ytd-playlist-panel-video-renderer')) {
+                break;
+            }
+            prevItem = prevItem.previousElementSibling;
+        }
+        
+        if (!prevItem) return;
+        
+        // Skip unplayable videos
+        if (CONFIG.skipUnplayable) {
+            const timestamp = prevItem.querySelector(SELECTORS.TIMESTAMP);
+            if (timestamp && !timestamp.textContent.includes(':')) {
+                log('Skipping unplayable video');
+                return;
+            }
+        }
+        
+        // Find and click video link
+        const videoLink = prevItem.querySelector('a#wc-endpoint');
+        if (videoLink) {
+            videoLink.click();
+            log('Redirecting to previous video');
+        }
+    }
+
+    // Helper functions
+    function isMiniPlayer() {
+        return !!document.querySelector(SELECTORS.MINIPLAYER);
+    }
+
+    function shouldRedirect() {
+        return (
+            !document.querySelector(SELECTORS.AD_CONTAINER) &&
+            (!player || !player.loop) &&
+            !isShuffleEnabled() &&
+            document.querySelector(SELECTORS.PLAYLIST_PANEL)
+        );
+    }
+
+    function isShuffleEnabled() {
+        const shuffleButton = document.querySelector(SELECTORS.SHUFFLE_BUTTON);
+        return shuffleButton && shuffleButton.getAttribute('aria-pressed') === 'true';
+    }
+
+    function showNotification(message) {
+        // Remove existing notifications
+        document.querySelectorAll('.pytplir_notification').forEach(el => el.remove());
+        
+        const notification = document.createElement('div');
+        notification.className = 'pytplir_notification';
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => notification.remove(), 3000);
+    }
+
+    function log(message) {
+        if (CONFIG.debugMode) {
+            console.log(`[YT Reverse+] ${message}`);
+        }
+    }
+
+    // Initialize script when document is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
         init();
-
-        function setAttributes(node, attributeValuePairs) { // [["id", "example"], ["width","20"], ...]
-            for (let attVal of attributeValuePairs){
-                node.setAttribute(attVal[0], attVal[1]);
+    }
+})();ttribute(attVal[0], attVal[1]);
             }
         }
 
